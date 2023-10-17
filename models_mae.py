@@ -18,6 +18,8 @@ from timm.models.vision_transformer import PatchEmbed, Block
 
 from util.pos_embed import get_2d_sincos_pos_embed
 
+from torchvision.transforms import Grayscale
+
 
 class MaskedAutoencoderViT(nn.Module):
     """ Masked Autoencoder with VisionTransformer backbone
@@ -25,7 +27,8 @@ class MaskedAutoencoderViT(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3,
                  embed_dim=1024, depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
+                 greyscale=False):
         super().__init__()
 
         # --------------------------------------------------------------------------
@@ -37,7 +40,7 @@ class MaskedAutoencoderViT(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
 
         self.blocks = nn.ModuleList([
-            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
+            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
         # --------------------------------------------------------------------------
@@ -51,7 +54,7 @@ class MaskedAutoencoderViT(nn.Module):
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
 
         self.decoder_blocks = nn.ModuleList([
-            Block(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
+            Block(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
             for i in range(decoder_depth)])
 
         self.decoder_norm = norm_layer(decoder_embed_dim)
@@ -59,6 +62,8 @@ class MaskedAutoencoderViT(nn.Module):
         # --------------------------------------------------------------------------
 
         self.norm_pix_loss = norm_pix_loss
+
+        self.greyscale = greyscale
 
         self.initialize_weights()
 
@@ -214,11 +219,21 @@ class MaskedAutoencoderViT(nn.Module):
         return loss
 
     def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
+        if self.greyscale:
+            input_imgs = Grayscale(num_output_channels=3)(imgs)
+        else:
+            input_imgs = imgs
+        latent, mask, ids_restore = self.forward_encoder(input_imgs, mask_ratio)
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
+def mae_vit_tiny_patch4_dec192d4b(**kwargs):
+    model = MaskedAutoencoderViT(
+        patch_size=4, img_size = 96, embed_dim=192, depth=12, num_heads=3,
+        decoder_embed_dim=192, decoder_depth=4, decoder_num_heads=3,
+        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    return model
 
 def mae_vit_base_patch16_dec512d8b(**kwargs):
     model = MaskedAutoencoderViT(
@@ -226,7 +241,6 @@ def mae_vit_base_patch16_dec512d8b(**kwargs):
         decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
-
 
 def mae_vit_large_patch16_dec512d8b(**kwargs):
     model = MaskedAutoencoderViT(
@@ -248,3 +262,6 @@ def mae_vit_huge_patch14_dec512d8b(**kwargs):
 mae_vit_base_patch16 = mae_vit_base_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
 mae_vit_large_patch16 = mae_vit_large_patch16_dec512d8b  # decoder: 512 dim, 8 blocks
 mae_vit_huge_patch14 = mae_vit_huge_patch14_dec512d8b  # decoder: 512 dim, 8 blocks
+
+# added by luke byrne
+mae_vit_tiny_patch4 = mae_vit_tiny_patch4_dec192d4b  # decoder: 192 dim, 4 blocks
